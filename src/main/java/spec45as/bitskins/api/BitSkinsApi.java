@@ -9,28 +9,14 @@ import org.slf4j.LoggerFactory;
 import spec45as.bitskins.error.UnsuccessfulRequestException;
 import spec45as.bitskins.http.Http;
 import spec45as.bitskins.http.TestingHttp;
-import spec45as.bitskins.objects.BitSkinsAccountBalance;
-import spec45as.bitskins.objects.BitSkinsBuyOrder;
-import spec45as.bitskins.objects.BitSkinsBuyOrderInfo;
-import spec45as.bitskins.objects.BitSkinsHistoryEvent;
-import spec45as.bitskins.objects.BitSkinsInventory;
-import spec45as.bitskins.objects.BitSkinsInventoryEvent;
-import spec45as.bitskins.objects.BitSkinsItem;
-import spec45as.bitskins.objects.BitSkinsItemOperationResult;
-import spec45as.bitskins.objects.BitSkinsItemPrice;
-import spec45as.bitskins.objects.SearchEnums;
+import spec45as.bitskins.objects.*;
 import spec45as.bitskins.objects.SearchEnums.SEARCH_OPTIONAL_CHOICE;
 import spec45as.bitskins.objects.SearchEnums.SEARCH_SORTING_CHOICE;
 import spec45as.bitskins.objects.SearchEnums.SEARCH_SORTING_DIRECTION;
 
 import java.io.IOException;
 import java.net.URLEncoder;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 
 public class BitSkinsApi {
@@ -112,6 +98,38 @@ public class BitSkinsApi {
     }
 
     /**
+     * @return current real bitskins prices, max 250
+     */
+    public HashMap<String, BitSkinsItemCurrentPrice> getAllRealItemsPrices(ArrayList<String> listOfNames) throws IOException,
+            UnsuccessfulRequestException {
+        StringJoiner joiner = new StringJoiner(",");
+
+        for (String itemName : listOfNames) {
+            joiner.add(itemName);
+        }
+
+        String url = getShopUrl().concat(
+                String.format("api/v1/get_price_data_for_items_on_sale/?api_key=%s&code=%s&names=%s",
+                        API_KEY, OtpGenerator.generatePassword(SECRET_KEY), URLEncoder.encode(joiner.toString(),
+                                "UTF-8").replaceAll("\\+", "%20")));
+
+        JsonNode jsonNode = getJsonResponse(url);
+        isRequestSuccessful(jsonNode);
+
+        HashMap<String, BitSkinsItemCurrentPrice> priceHashMap = new HashMap<>();
+        JsonNode prices = jsonNode.get("data").get("items");
+        Iterator<JsonNode> iterator = prices.elements();
+        while (iterator.hasNext()) {
+            JsonNode node = iterator.next();
+            BitSkinsItemCurrentPrice bitSkinsPrice =
+                    defaultObjectMapper.readValue(node.toString(), BitSkinsItemCurrentPrice.class);
+            priceHashMap.put(bitSkinsPrice.getMarketHashName(), bitSkinsPrice);
+        }
+
+        return priceHashMap;
+    }
+
+    /**
      * @return current bitskins buy orders
      */
     public HashMap<String, BitSkinsBuyOrder> getAllBuyOrdersPrices() throws IOException, UnsuccessfulRequestException {
@@ -127,10 +145,14 @@ public class BitSkinsApi {
         while (iterator.hasNext()) {
             JsonNode node = iterator.next();
             String key = node.get(0).asText().intern();
-            BitSkinsBuyOrder bitSkinsBuyOrder =
-                    defaultObjectMapper.readValue(node.get(1).toString(), BitSkinsBuyOrder.class);
-            bitSkinsBuyOrder.setItemName(key);
-            bitSkinsBuyOrderHashMap.put(key, bitSkinsBuyOrder);
+            try {
+                BitSkinsBuyOrder bitSkinsBuyOrder =
+                        defaultObjectMapper.readValue(node.get(1).toString(), BitSkinsBuyOrder.class);
+                bitSkinsBuyOrder.setItemName(key);
+                bitSkinsBuyOrderHashMap.put(key, bitSkinsBuyOrder);
+            } catch (Exception error) {
+                log.error(error.getMessage(), error);
+            }
         }
 
         return bitSkinsBuyOrderHashMap;
@@ -245,6 +267,32 @@ public class BitSkinsApi {
                     defaultObjectMapper.readValue(node.toString(),
                             BitSkinsHistoryEvent.class);
             eventHistory.put(event.getItemId(), event);
+        }
+
+        return eventHistory;
+    }
+
+    /**
+     * @return current bitskins item sell history
+     */
+    public HashMap<Long, BitSkinsItemSellEvent> getItemSellHistory(String itemName) throws IOException,
+            UnsuccessfulRequestException {
+        String url = getShopUrl().concat(
+                String.format("api/v1/get_sales_info/?api_key=%s&code=%s&page=1&market_hash_name=%s",
+                        API_KEY, OtpGenerator.generatePassword(SECRET_KEY), URLEncoder.encode(itemName, "UTF-8")
+                                .replaceAll("\\+", "%20")));
+        JsonNode jsonNode = getJsonResponse(url);
+        isRequestSuccessful(jsonNode);
+        HashMap<Long, BitSkinsItemSellEvent> eventHistory = new HashMap<>();
+
+        JsonNode items = jsonNode.get("data").get("sales");
+        Iterator<JsonNode> iterator = items.elements();
+        while (iterator.hasNext()) {
+            JsonNode node = iterator.next();
+            BitSkinsItemSellEvent event =
+                    defaultObjectMapper.readValue(node.toString(),
+                            BitSkinsItemSellEvent.class);
+            eventHistory.put(event.getSoldAt(), event);
         }
 
         return eventHistory;
@@ -571,6 +619,27 @@ public class BitSkinsApi {
             bitSkinsBuyOrderInfos.put(bitSkinsBuyOrderInfo.getBuyOrderId(), bitSkinsBuyOrderInfo);
         }
         return bitSkinsBuyOrderInfos;
+    }
+
+    /**
+     * Allows you to retrieve information about items requested/sent in a given trade from BitSkins.
+     * Trade details will be unretrievable 7 days after the initiation of the trade..
+     *
+     * @return BitSkinsTradeDetail
+     */
+    public BitSkinsTradeDetail getTradeDetails(String tradeToken, String tradeId) throws IOException,
+            UnsuccessfulRequestException {
+        String url = getShopUrl().concat(
+                String.format("api/v1/get_trade_details/?api_key=%s&code=%s&trade_token=%s&trade_id=%s",
+                        API_KEY, OtpGenerator.generatePassword(SECRET_KEY), tradeToken, tradeId));
+
+        JsonNode jsonNode = getJsonResponse(url);
+        isRequestSuccessful(jsonNode);
+
+        BitSkinsTradeDetail tradeDetail = defaultObjectMapper.readValue(
+                jsonNode.get("data").toString(), BitSkinsTradeDetail.class);
+
+        return tradeDetail;
     }
 
     /**
